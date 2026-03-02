@@ -5,9 +5,9 @@
 ## 已实现的 MVP 能力
 
 1. **云端平台向机器人发送底盘指令**
-   - 云端服务 `CloudServer` 默认发送 `twist=[0.1,0,0,0,0,0]` 到 MQTT 主题：`robot/{robot_id}/cmd/chassis`。
+   - 云端服务 `CloudServer` 默认发送 `action goal 字段（x=0.1, y=0, z=0, roll=0, pitch=0, yaw=0, frame_id="map"）` 到 MQTT 主题：`robot/{robot_id}/cmd/chassis`。
 2. **本体层接收指令并调用 ROS2 导航适配层，返回状态**
-   - 机器人服务 `RobotAgent` 订阅命令后调用 `Ros2Navigator.move_chassis()` 执行动作。
+   - 机器人服务 `RobotAgent` 订阅命令后调用 `Ros2Navigator.send_nav_goal()` 执行动作。
    - 执行过程会上报 `accepted` 与 `success/failed` 到 `robot/{robot_id}/status/nav`。
 3. **云端接收回传并记忆**
    - 云端订阅状态主题后写入 SQLite（`mvp/data/cloud_memory.db`），可按 robot_id 查询历史状态。

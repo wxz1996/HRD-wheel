@@ -6,7 +6,7 @@
 
 当前 MVP 已实现：
 
-1. 云端发送底盘指令（示例：`[0.1, 0, 0, 0, 0, 0]`）到机器人。
+1. 云端发送 ROS2 action 风格字段（`goal`）到机器人。
 2. 机器人接收指令后调用导航适配层执行（ROS2 可接入，当前默认可 mock）。
 3. 机器人上报执行状态（`accepted` / `success` / `failed`）给云端。
 4. 云端接收状态并写入 SQLite 做“记忆”。
@@ -58,7 +58,7 @@ source .venv/bin/activate
 python -m mvp.cloud.server
 ```
 
-云端启动后会自动发送一次 demo 指令：`[0.1,0,0,0,0,0]`。
+云端启动后会自动发送一次 demo action goal：`{"frame_id":"map","x":0.1,"y":0,"z":0,"roll":0,"pitch":0,"yaw":0}`。
 
 ---
 
@@ -66,7 +66,7 @@ python -m mvp.cloud.server
 
 云端日志应看到类似输出：
 
-- `sent command <cmd_id>`
+- `sent action command <cmd_id>`
 - `stored status: accepted cmd=<cmd_id>`
 - `stored status: success cmd=<cmd_id>`
 
@@ -97,9 +97,8 @@ pytest mvp/tests -q
 
 `mvp.robot.navigator.Ros2Navigator` 已预留对接点。
 
-你接入真机时，可在 `move_chassis()` 内替换为：
+你接入真机时，可在 `send_nav_goal()` 内替换为：
 
-- 发布 `geometry_msgs/Twist` 到 `/cmd_vel`，或
-- 调用 Nav2 action（如 `NavigateToPose` / 自定义动作）
+- 调用 Nav2 action（如 `NavigateToPose` / 自定义动作）并传入 goal 字段
 
 并将执行结果映射为状态上报。

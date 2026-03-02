@@ -23,10 +23,10 @@ class CloudServer:
         self.store.save_status(msg)
         print(f"[cloud] stored status: {msg['status']} cmd={msg['cmd_id']}")
 
-    def send_forward_command(self, vector: list[float]) -> str:
-        command = CommandMessage.new(robot_id=self.robot_id, vector=vector)
+    def send_forward_command(self, x: float = 0.1) -> str:
+        command = CommandMessage.new(robot_id=self.robot_id, x=x)
         self.mqtt_client.publish_json(self.cmd_topic, command.to_dict(), qos=1)
-        print(f"[cloud] sent command {command.msg_id}: {vector}")
+        print(f"[cloud] sent action command {command.msg_id}: goal.x={x}")
         return command.msg_id
 
     def run(self, send_demo: bool = True) -> None:
@@ -35,7 +35,7 @@ class CloudServer:
         self.mqtt_client.loop_start()
 
         if send_demo:
-            self.send_forward_command([0.1, 0, 0, 0, 0, 0])
+            self.send_forward_command(0.1)
 
         import time
 

@@ -21,7 +21,7 @@ class RobotAgent:
 
     def on_command(self, cmd: dict) -> None:
         cmd_id = cmd["msg_id"]
-        twist = cmd["payload"]["twist"]
+        goal = cmd["payload"]["goal"]
 
         self.mqtt_client.publish_json(
             self.status_topic,
@@ -29,11 +29,11 @@ class RobotAgent:
                 robot_id=self.robot_id,
                 cmd_id=cmd_id,
                 status="accepted",
-                detail={"phase": "received"},
+                detail={"phase": "received", "action": cmd["payload"].get("action", "")},
             ).to_dict(),
         )
 
-        result = self.navigator.move_chassis(twist)
+        result = self.navigator.send_nav_goal(goal)
 
         self.mqtt_client.publish_json(
             self.status_topic,
@@ -41,7 +41,7 @@ class RobotAgent:
                 robot_id=self.robot_id,
                 cmd_id=cmd_id,
                 status="success" if result.ok else "failed",
-                detail={"phase": "finished", "message": result.message},
+                detail={"phase": "finished", "goal": goal, "message": result.message},
             ).to_dict(),
         )
 

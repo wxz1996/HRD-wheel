@@ -41,8 +41,16 @@ class FakeJsonClient:
 
 
 class OkNavigator(NavigatorAdapter):
-    def move_chassis(self, twist):
-        assert twist == [0.1, 0, 0, 0, 0, 0]
+    def send_nav_goal(self, goal):
+        assert goal == {
+            "frame_id": "map",
+            "x": 0.1,
+            "y": 0.0,
+            "z": 0.0,
+            "roll": 0.0,
+            "pitch": 0.0,
+            "yaw": 0.0,
+        }
         return NavigationResult(ok=True, message="ok")
 
 
@@ -58,7 +66,7 @@ def test_cloud_robot_roundtrip(tmp_path):
     cloud_client.subscribe_json(cloud.status_topic, cloud.on_status)
     robot_client.subscribe_json(robot.cmd_topic, robot.on_command)
 
-    cmd_id = cloud.send_forward_command([0.1, 0, 0, 0, 0, 0])
+    cmd_id = cloud.send_forward_command(0.1)
 
     rows = store.list_statuses("RBT-001")
     assert len(rows) == 2
