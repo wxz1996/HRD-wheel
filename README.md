@@ -55,3 +55,8 @@ python -m mvp.cloud.server
 ```bash
 pytest mvp/tests -q
 ```
+
+
+## 运行指引
+
+- MVP 运行说明：`mvp/README.md`
