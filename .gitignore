@@ -1,0 +1,6 @@
+robot_gateway/.venv/
+robot_agent/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/

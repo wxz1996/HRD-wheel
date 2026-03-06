@@ -1,281 +1,223 @@
-# Robot Gateway (MVP)
+# Robot Gateway
 
-一个可运行的机器人端网关（FastAPI），与云端 Observer Service 对齐，支持：
+`robot_gateway` 是 OpenClaw 体系下的数据面网关实现。
 
-- 技能执行闭环（HTTP + WebSocket）
-- WebRTC 实时视频（机器人端作为 WebRTC server）
-- Snapshot 抓帧接口（`/snapshot`，JPEG bytes）
-- 本地 artifacts 静态文件托管
-- ROS2 可选接入（不可用时自动 fallback）
+- OpenClaw（控制面）负责：任务编排、策略、会话、权限
+- Robot Gateway（数据面）负责：技能执行、任务状态机、视频/抓图、设备适配
+- 两者通过稳定任务协议通信：`/v1/capabilities` 与 `/v1/tasks*`
 
-## 1. 完整系统架构
+## 你第一次接手时先看什么
 
-### 1.1 总体架构（逻辑视图）
+1. [references/robot-gateway-mvp.md](references/robot-gateway-mvp.md)
+2. [references/codebase-map.md](references/codebase-map.md)
+3. [app/main.py](app/main.py)
+4. [tests/test_api.py](tests/test_api.py)
 
-```text
-┌──────────────────────────────────────────────────────────────────┐
-│                        Cloud: Observer Service                  │
-│  - follow_run 轮询 /runs/{run_id}                               │
-│  - 调用 /snapshot 获取 JPEG                                     │
-│  - 通过 /monitor/stream_info 获取 /webrtc/offer /debug/webrtc   │
-└───────────────────────────────┬──────────────────────────────────┘
-                                │ HTTP / WS / WebRTC
-                                ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                    Robot Gateway (FastAPI, :8000)               │
-│                                                                  │
-│  REST API                                                        │
-│   - POST /skills/{skill}:run                                    │
-│   - GET  /runs/{run_id}                                          │
-│   - POST /runs/{run_id}:cancel                                   │
-│   - GET  /snapshot                                                │
-│   - POST /webrtc/offer                                            │
-│   - POST /webrtc/{session_id}:close                              │
-│   - GET  /webrtc/sessions, /debug/webrtc                         │
-│                                                                  │
-│  WS API                                                           │
-│   - /ws/runs/{run_id} 推送 progress/status/artifact/log           │
-│                                                                  │
-│  Internal Components                                              │
-│   - app/main.py：路由与编排                                        │
-│   - app/models.py：Envelope/请求/事件模型                          │
-│   - app/run_store.py：run 生命周期与取消                           │
-│   - app/ws_manager.py：run 级别 WS 广播                           │
-│   - app/skills/*：move_to/capture_image/get_status               │
-│   - app/snapshot.py：JPEG 抓帧                                    │
-│   - app/webrtc/*：WebRTC 会话管理与视频轨                          │
-│                                                                  │
-│  Storage                                                          │
-│   - ./artifacts 挂载到 /artifacts                                │
-│   - capture_image -> ./artifacts/img/{run_id}.jpg               │
-└───────────────────────────────┬──────────────────────────────────┘
-                                │
-                ┌───────────────┴────────────────┐
-                ▼                                ▼
-       ┌───────────────────────┐        ┌───────────────────────────┐
-       │ ROS2 Source (optional)│        │ Fallback Frame Generator  │
-       │ rclpy + sensor_msgs   │        │ 生成带时间戳的模拟帧/JPEG  │
-       │ + cv_bridge           │        │ (无 ROS2 时自动启用)       │
-       └───────────────────────┘        └───────────────────────────┘
-```
-
-### 1.2 目录与职责（实现视图）
-
-```text
-robot_gateway/
-  app/
-    main.py                # FastAPI 入口与所有路由
-    config.py              # 环境变量读取（默认 topic/分辨率/fps/STUN）
-    models.py              # Envelope、Artifact、Error、请求/响应/事件模型
-    run_store.py           # 内存 run 状态管理 + cancel_event
-    ws_manager.py          # WebSocket 连接与事件广播
-    skills/
-      move_to.py           # 异步 move_to（进度、可取消）
-      capture_image.py     # 生成 artifact 图片并返回 URL
-      get_status.py        # mock 电量/模式
-    adapters/
-      base.py              # 机器人适配抽象
-      mock_adapter.py      # mock 适配实现
-    webrtc/
-      manager.py           # aiortc RTCPeerConnection session 生命周期
-      tracks.py            # VideoStreamTrack -> av.VideoFrame
-      ros_source.py        # ROS2 订阅帧源 + fallback 帧源
-    snapshot.py            # /snapshot JPEG 输出（复用帧源）
-  artifacts/
-    img/
-  static/
-    webrtc_debug.html      # 浏览器端 WebRTC 调试页面
-  tests/
-    test_api.py            # API 行为测试
-```
-
-### 1.3 关键数据流（时序视图）
-
-#### A) Skill 执行闭环（以 move_to 为例）
-
-```text
-Observer/Client -> POST /skills/move_to:run
-Robot Gateway:
-  1) run_store.create() 生成 run_id, status=CREATED
-  2) 后台任务 execute_move_to() -> status=RUNNING
-  3) 周期性通过 ws_manager.publish() 推送 progress
-  4) 结束后 status=SUCCEEDED（或 CANCELED/FAILED）
-Observer/Client:
-  - 轮询 GET /runs/{run_id}
-  - 或订阅 ws://.../ws/runs/{run_id}
-```
-
-#### B) 抓图与 artifact
-
-```text
-Client -> POST /skills/capture_image:run
-Robot Gateway:
-  1) 生成 JPEG 到 ./artifacts/img/{run_id}.jpg
-  2) 返回 Envelope.artifacts[0].url =
-     http://<robot_host>:8000/artifacts/img/{run_id}.jpg
-  3) 同时通过 WS 推送 artifact_created/status_changed
-```
-
-#### C) Snapshot（Observer 对齐接口）
-
-```text
-Observer -> GET /snapshot?camera_topic=...&width=...&height=...
-Robot Gateway:
-  - ROS2 可用：从 topic 取最新帧并编码 JPEG
-  - ROS2 不可用：fallback 生成伪帧并编码 JPEG
-返回：image/jpeg bytes（非 JSON）
-```
-
-#### D) WebRTC 视频流
-
-```text
-Browser/Observer:
-  1) 创建本地 offer SDP
-  2) POST /webrtc/offer {sdp,type,camera_topic,width,height,fps}
-Robot Gateway:
-  3) 创建 RTCPeerConnection + CameraVideoTrack
-  4) setRemoteDescription(offer)
-  5) createAnswer + setLocalDescription(answer)
-  6) 返回 {sdp,type:"answer",session_id}
-Browser:
-  7) setRemoteDescription(answer) 开始收流
-  8) 结束时 POST /webrtc/{session_id}:close
-```
-
-### 1.4 状态机
-
-`RunStatus`: `CREATED -> RUNNING -> SUCCEEDED|FAILED|CANCELED`
-
-- `move_to`：`CREATED -> RUNNING -> SUCCEEDED`（可在 RUNNING 时 cancel -> CANCELED）
-- `capture_image/get_status`：通常快速收敛到 `SUCCEEDED`
-
-### 1.5 部署与网络边界
-
-- 服务监听：`0.0.0.0:8000`（通过 uvicorn 启动参数控制）
-- 静态文件：`/artifacts/*` 对外可访问（用于云端直接拉取图片）
-- WebRTC：默认 host candidates；可用 `STUN_SERVER` 增强跨网段连通
-- 建议在机器人设备上放行：`8000/tcp`（HTTP/WS/WebRTC 信令）
-
-## 2. 快速启动
-
-> Python 3.10+
+## 快速开始（10 分钟，默认 MQTT JSON）
 
 ```bash
-cd robot_gateway
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+# 先确保 MQTT broker 在 1883 可用
+docker compose up -d mqtt-broker
+
+uv venv
+uv sync --all-groups
+uv run uvicorn app.main:app --reload --port 8000
 ```
 
-服务默认地址：`http://localhost:8000`
+访问：`http://127.0.0.1:8000/healthz`
 
-## 3. 环境变量
+## 架构拆分
 
-- `ROBOT_PORT`（默认 `8000`，用于生成 artifact URL）
-- `DEFAULT_CAMERA_TOPIC`（默认 `/camera/image_raw`）
-- `DEFAULT_WIDTH`（默认 `640`）
-- `DEFAULT_HEIGHT`（默认 `480`）
-- `DEFAULT_FPS`（默认 `15`）
-- `STUN_SERVER`（可选，例如 `stun:stun.l.google.com:19302`）
+推荐拆成两个可独立演进的部分：
 
-示例：
+- `robot-bridge`：FastAPI 网关（本项目 `app/`）
+- `mqtt-broker`：MQTT 消息基础设施（Mosquitto/EMQX）
 
-```bash
-export ROBOT_PORT=8000
-export DEFAULT_CAMERA_TOPIC=/camera/image_raw
-export DEFAULT_WIDTH=640
-export DEFAULT_HEIGHT=480
-export DEFAULT_FPS=15
-export STUN_SERVER=stun:stun.l.google.com:19302
-```
-
-## 4. API 使用（curl）
-
-### 4.1 move_to
-
-```bash
-curl -X POST 'http://localhost:8000/skills/move_to:run' \
-  -H 'content-type: application/json' \
-  -d '{"location":"dock","timeout_seconds":10}'
-```
-
-### 4.2 查询 run 状态
-
-```bash
-curl 'http://localhost:8000/runs/<run_id>'
-```
-
-### 4.3 取消 run
-
-```bash
-curl -X POST 'http://localhost:8000/runs/<run_id>:cancel'
-```
-
-### 4.4 capture_image
-
-```bash
-curl -X POST 'http://localhost:8000/skills/capture_image:run' \
-  -H 'content-type: application/json' \
-  -d '{"camera":"front"}'
-```
-
-### 4.5 snapshot
-
-```bash
-curl 'http://localhost:8000/snapshot?camera_topic=/camera/image_raw&width=640&height=480' --output snap.jpg
-```
-
-## 5. WebSocket 订阅 run 事件
+机器人侧在 ROS2 环境中运行独立 Agent（本仓库提供 stub 脚本）。
 
 ```text
-ws://localhost:8000/ws/runs/{run_id}
+OpenClaw (Control Plane)
+        |
+        | HTTP/WS Task Protocol
+        v
+robot-bridge (this project)
+        |
+        | MQTT JSON
+        v
+mqtt-broker
+        |
+        v
+robot-agent (ROS2 environment)
 ```
 
-事件格式：
+## 运行模式
 
-```json
-{
-  "run_id": "...",
-  "event": "progress|status_changed|artifact_created|log",
-  "status": "CREATED|RUNNING|SUCCEEDED|FAILED|CANCELED",
-  "percent": 10,
-  "message": "...",
-  "telemetry": {}
-}
+### 模式 A：本地协议验证（默认 `mqtt_json`）
+
+```bash
+# 1) broker
+docker compose up -d mqtt-broker
+
+# 2) robot agent（本地 stub，模拟 ROS2 执行）
+uv run python scripts/run_robot_mqtt_agent_stub.py --mqtt-host 127.0.0.1 --mqtt-port 1883
+
+# 可替换为真实机器人端 agent（推荐）
+# 见 ../robot_agent/README.md
+
+# 3) gateway（默认即 mqtt_json，可不显式设置 ROBOT_ADAPTER）
+uv run uvicorn app.main:app --reload --port 8000
+uv run python scripts/test_openclaw_ros2_flow.py --base-url http://127.0.0.1:8000 --expected-adapter mqtt_json
 ```
 
-## 6. WebRTC 调试
+### 模式 B：Gateway 无 ROS2，走 MQTT 桥接
 
-浏览器打开：
+```bash
+# 1) 机器人侧 agent stub
+uv run python scripts/run_robot_mqtt_agent_stub.py --mqtt-host 127.0.0.1 --mqtt-port 1883
 
-- `http://localhost:8000/debug/webrtc`
+# 或使用独立项目 robot_agent（内部 ROS2）
+# 见 ../robot_agent/README.md
 
-页面中可输入 `camera_topic` 后连接。
+# 2) gateway
+export ROBOT_ADAPTER=mqtt_json
+export MQTT_HOST=127.0.0.1
+export MQTT_PORT=1883
+export MQTT_TOPIC_PREFIX=hrd
+export MQTT_ROBOT_ID=robot-001
+uv run uvicorn app.main:app --reload --port 8000
 
-API：
+# 3) 虚拟 openclaw 测试
+uv run python scripts/test_openclaw_ros2_flow.py --base-url http://127.0.0.1:8000 --expected-adapter mqtt_json
+```
 
+### 模式 C：Docker Compose 一键联调
+
+```bash
+docker compose up --build
+```
+
+推荐后台方式（便于继续在终端执行测试）：
+
+```bash
+docker compose up -d --build
+```
+
+## 已验证联调流程（2026-03-05）
+
+以下流程已在本仓库验证通过，适合第一次跑通 `mqtt_json`：
+
+```bash
+# 1) 启动三服务（Broker + Bridge + Agent Stub）
+docker compose up -d --build mqtt-broker robot-agent-stub robot-bridge
+
+# 2) 查看状态
+docker compose ps
+
+# 3) 查看关键日志（确认 bridge 已启动）
+docker compose logs --tail=80 robot-bridge robot-agent-stub
+
+# 4) 端到端回归（宿主机执行）
+uv run python scripts/test_openclaw_ros2_flow.py \
+  --base-url http://127.0.0.1:8000 \
+  --expected-adapter mqtt_json
+
+# 5) 收尾
+docker compose down
+```
+
+预期成功标志：脚本末尾打印 `OpenClaw virtual flow PASSED`。
+
+## 依赖与运行时说明（本次补充）
+
+- 容器基础镜像：`python:3.11-slim`
+- Python 工具：`uv`
+- MQTT Python 库：`paho-mqtt`（使用 Callback API v2）
+- Broker：`eclipse-mosquitto:2`
+- OpenCV 运行时系统库（容器内）：
+  - `libxcb1`
+  - `libglib2.0-0`
+  - `libgl1`
+- 网关静态目录（容器内）：`/app/artifacts`（镜像构建时创建）
+
+对应 Docker 构建定义见 `deploy/docker/Dockerfile.bridge`。
+
+## 常见问题排查
+
+1. `ConnectionRefusedError: [Errno 61]`（连接 `127.0.0.1:1883` 失败）
+
+- 原因：MQTT Broker 未启动。
+- 处理：
+
+```bash
+docker compose up -d mqtt-broker
+```
+
+2. `ImportError: libxcb.so.1: cannot open shared object file`
+
+- 原因：容器缺 OpenCV 运行时依赖。
+- 处理：已在镜像中安装 `libxcb1/libglib2.0-0/libgl1`；重新构建即可：
+
+```bash
+docker compose up -d --build robot-bridge robot-agent-stub
+```
+
+3. `RuntimeError: Directory '/app/artifacts' does not exist`
+
+- 原因：网关启动时挂载静态目录，但容器内目录不存在。
+- 处理：已在镜像构建阶段创建 `/app/artifacts`，重新构建后生效。
+
+4. `TypeError` 与 `reason_code` 相关（Paho 回调）
+
+- 原因：`reason_code` 在不同版本下可能是对象，不可直接 `int(reason_code)`。
+- 处理：代码已统一做兼容转换并切到 Callback API v2。
+
+## 对外 API（控制面唯一入口）
+
+- `GET /v1/capabilities`
+- `GET /v1/diagnostics/robot-link`
+- `POST /v1/tasks`
+- `GET /v1/tasks/{task_id}`
+- `POST /v1/tasks/{task_id}:cancel`
+- `WS /v1/tasks/{task_id}/events`
+
+扩展能力：
+
+- `GET /snapshot`
 - `POST /webrtc/offer`
 - `POST /webrtc/{session_id}:close`
 - `GET /webrtc/sessions`
+- `GET /debug/webrtc`
 
-## 7. 与云端 Observer 对接
+历史说明：
 
-- 设置云端：`ROBOT_BASE_URL=http://<robot_host>:8000`
-- Observer 会调用：
-  - `/snapshot?camera_topic=...&width=...&height=...`
-  - `/runs/{run_id}`（需至少含 `status`）
-- Observer `/monitor/stream_info` 可返回：
-  - `/webrtc/offer`
-  - `/debug/webrtc`
+旧接口（`/skills/*`、`/runs/*`、`/ws/runs/*`）已移除，请统一使用 `/v1/tasks*` 与 `WS /v1/tasks/{task_id}/events`。
 
-## 8. ROS2 适配说明
+## 目录说明
 
-- 若环境可导入 `rclpy + sensor_msgs + cv_bridge`，将尝试用 ROS2 topic 帧源。
-- 若 ROS2 不可用，自动 fallback 生成带时间戳的伪视频帧。
-- Snapshot/WebRTC 在无 ROS2 时也可运行。
+- `app/`: 网关主代码
+- `scripts/`: 联调脚本（虚拟 OpenClaw 与机器人 Agent stub）
+- `tests/`: API 行为测试
+- `deploy/`: Docker 与 Broker 配置
+- `references/`: 架构、协议、代码地图
 
-## 9. aiortc/av 依赖排错
+## 常用开发命令
 
-`aiortc` 依赖 `av`，在某些系统可能需要 FFmpeg 相关库。
-若安装失败，请先安装系统依赖（按你的发行版选择）。
+```bash
+# 运行测试
+uv run pytest tests/test_api.py
+
+# OpenClaw 全链路回归
+uv run python scripts/test_openclaw_ros2_flow.py --base-url http://127.0.0.1:8000
+```
+
+## 关键环境变量
+
+- `ROBOT_ADAPTER`: `mqtt_json`（当前唯一支持值）
+- `ROBOT_PORT`: HTTP 端口，默认 `8000`
+- `MQTT_HOST` / `MQTT_PORT`
+- `MQTT_TOPIC_PREFIX` / `MQTT_ROBOT_ID`
+- `MQTT_TIMEOUT_SECONDS`
+- `DEFAULT_CAMERA_TOPIC` / `DEFAULT_WIDTH` / `DEFAULT_HEIGHT` / `DEFAULT_FPS`
+- `STUN_SERVER`（WebRTC 可选）
+
+完整说明见 [references/robot-gateway-mvp.md](references/robot-gateway-mvp.md)。

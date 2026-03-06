@@ -9,7 +9,6 @@ import numpy as np
 try:
     import rclpy
     from cv_bridge import CvBridge
-    from rclpy.node import Node
     from sensor_msgs.msg import Image as RosImage
 
     ROS2_AVAILABLE = True
@@ -17,7 +16,6 @@ except Exception:
     ROS2_AVAILABLE = False
     rclpy = None
     CvBridge = None
-    Node = object
     RosImage = object
 
 
