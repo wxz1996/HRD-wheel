@@ -70,7 +70,6 @@ ROS2 robot stack (topics/services/actions)
 ### 3.2 本仓库内角色
 
 - `robot-bridge`：FastAPI 服务（`app/`）
-- `robot-agent-stub`：模拟机器人 ROS2 执行侧（`scripts/run_robot_mqtt_agent_stub.py`）
 - `../robot_agent`：独立机器人端 Agent 项目（建议用于真实 ROS2 集成）
 - `mqtt-broker`：通过 `docker-compose.yml` 启动
 
@@ -239,10 +238,6 @@ Gateway 默认采用 `mqtt_json` 适配器，通过 MQTT JSON 调机器人 Agent
 - `get_position`
 - `move_to`
 - `capture_image`
-
-本仓库测试 stub：
-
-- [scripts/run_robot_mqtt_agent_stub.py](../scripts/run_robot_mqtt_agent_stub.py)
 - 真实机器人端建议使用 [../robot_agent/README.md](../../robot_agent/README.md)
 
 ## 7. 典型时序
@@ -301,8 +296,8 @@ uv run python scripts/test_openclaw_ros2_flow.py --base-url http://127.0.0.1:800
 ### 9.4 MQTT 桥接验证（Gateway 无 ROS2）
 
 ```bash
-# terminal A: robot agent stub
-uv run python scripts/run_robot_mqtt_agent_stub.py --mqtt-host 127.0.0.1 --mqtt-port 1883
+# terminal A: robot agent（ROS2）
+# 见 ../../robot_agent/README.md
 
 # terminal B: gateway
 export ROBOT_ADAPTER=mqtt_json

@@ -33,7 +33,7 @@ uv run uvicorn app.main:app --reload --port 8000
 - `robot-bridge`：FastAPI 网关（本项目 `app/`）
 - `mqtt-broker`：MQTT 消息基础设施（Mosquitto/EMQX）
 
-机器人侧在 ROS2 环境中运行独立 Agent（本仓库提供 stub 脚本）。
+机器人侧在 ROS2 环境中运行独立 Agent。
 
 ```text
 OpenClaw (Control Plane)
@@ -58,10 +58,7 @@ robot-agent (ROS2 environment)
 # 1) broker
 docker compose up -d mqtt-broker
 
-# 2) robot agent（本地 stub，模拟 ROS2 执行）
-uv run python scripts/run_robot_mqtt_agent_stub.py --mqtt-host 127.0.0.1 --mqtt-port 1883
-
-# 可替换为真实机器人端 agent（推荐）
+# 2) robot agent（ROS2）
 # 见 ../robot_agent/README.md
 
 # 3) gateway（默认即 mqtt_json，可不显式设置 ROBOT_ADAPTER）
@@ -72,11 +69,9 @@ uv run python scripts/test_openclaw_ros2_flow.py --base-url http://127.0.0.1:800
 ### 模式 B：Gateway 无 ROS2，走 MQTT 桥接
 
 ```bash
-# 1) 机器人侧 agent stub
-uv run python scripts/run_robot_mqtt_agent_stub.py --mqtt-host 127.0.0.1 --mqtt-port 1883
-
-# 或使用独立项目 robot_agent（内部 ROS2）
-# 见 ../robot_agent/README.md
+# 1) broker + 机器人侧 agent（ROS2）
+docker compose up -d mqtt-broker
+# 机器人侧 agent 启动见 ../robot_agent/README.md
 
 # 2) gateway
 export ROBOT_ADAPTER=mqtt_json
@@ -107,21 +102,24 @@ docker compose up -d --build
 以下流程已在本仓库验证通过，适合第一次跑通 `mqtt_json`：
 
 ```bash
-# 1) 启动三服务（Broker + Bridge + Agent Stub）
-docker compose up -d --build mqtt-broker robot-agent-stub robot-bridge
+# 1) 启动两服务（Broker + Bridge）
+docker compose up -d --build mqtt-broker robot-bridge
 
-# 2) 查看状态
+# 2) 启动机器人侧 agent（ROS2）
+# 见 ../robot_agent/README.md
+
+# 3) 查看状态
 docker compose ps
 
-# 3) 查看关键日志（确认 bridge 已启动）
-docker compose logs --tail=80 robot-bridge robot-agent-stub
+# 4) 查看关键日志（确认 bridge 已启动）
+docker compose logs --tail=80 robot-bridge
 
-# 4) 端到端回归（宿主机执行）
+# 5) 端到端回归（宿主机执行）
 uv run python scripts/test_openclaw_ros2_flow.py \
   --base-url http://127.0.0.1:8000 \
   --expected-adapter mqtt_json
 
-# 5) 收尾
+# 6) 收尾
 docker compose down
 ```
 
@@ -158,7 +156,7 @@ docker compose up -d mqtt-broker
 - 处理：已在镜像中安装 `libxcb1/libglib2.0-0/libgl1`；重新构建即可：
 
 ```bash
-docker compose up -d --build robot-bridge robot-agent-stub
+docker compose up -d --build robot-bridge
 ```
 
 3. `RuntimeError: Directory '/app/artifacts' does not exist`
@@ -195,7 +193,7 @@ docker compose up -d --build robot-bridge robot-agent-stub
 ## 目录说明
 
 - `app/`: 网关主代码
-- `scripts/`: 联调脚本（虚拟 OpenClaw 与机器人 Agent stub）
+- `scripts/`: 联调脚本（虚拟 OpenClaw）
 - `tests/`: API 行为测试
 - `deploy/`: Docker 与 Broker 配置
 - `references/`: 架构、协议、代码地图

@@ -26,25 +26,3 @@ services:
     ports:
       - "8000:8000"
     restart: unless-stopped
-
-  robot-agent-stub:
-    build:
-      context: .
-      dockerfile: deploy/docker/Dockerfile.bridge
-    container_name: robot-agent-stub
-    command:
-      - uv
-      - run
-      - python
-      - scripts/run_robot_mqtt_agent_stub.py
-      - --mqtt-host
-      - mqtt-broker
-      - --mqtt-port
-      - "1883"
-      - --topic-prefix
-      - hrd
-      - --robot-id
-      - robot-001
-    depends_on:
-      - mqtt-broker
-    restart: unless-stopped
