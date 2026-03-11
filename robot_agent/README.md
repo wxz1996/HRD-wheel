@@ -4,7 +4,7 @@
 
 - 订阅 RealSense 图像 topic（默认 `/camera/color/image_raw`）
 - 通过 MQTT JSON 与 `robot_gateway` 通信
-- 仅处理 `capture_image` action（供 Gateway 的 `capture_image` skill 调用）
+- 处理 action：`capture_image` / `get_status` / `get_position` / `move_to`
 
 ## 包结构
 
@@ -60,7 +60,7 @@ ros2 topic echo /camera/color/image_raw --once
 ```bash
 ros2 run robot_agent capture_agent \
   --ros-args \
-  -p mqtt_host:=192.168.1.10 \
+  -p mqtt_host:=192.168.0.114 \
   -p mqtt_port:=1883 \
   -p topic_prefix:=hrd \
   -p robot_id:=robot-001 \
@@ -72,7 +72,7 @@ ros2 run robot_agent capture_agent \
 
 ```bash
 ros2 launch robot_agent robot_agent.launch.py \
-  mqtt_host:=192.168.1.10 \
+  mqtt_host:=192.168.0.114 \
   mqtt_port:=1883 \
   topic_prefix:=hrd \
   robot_id:=robot-001 \
@@ -89,7 +89,7 @@ ros2 launch robot_agent robot_agent.launch.py \
 - `MQTT_TOPIC_PREFIX`
 - `MQTT_ROBOT_ID`
 
-Gateway 触发 `capture_image` skill 时，会发 MQTT action `capture_image` 到：
+Gateway 会发 MQTT action 到：
 
 - `{topic_prefix}/robot/{robot_id}/cmd`
 
@@ -99,3 +99,78 @@ Agent 按请求中的 `reply_to` 回包，数据字段包含：
 - `width`
 - `height`
 - `image_jpeg_base64`
+- `battery`
+- `mode`
+- `frame_id` / `x` / `y` / `yaw`
+- `accepted` / `final_pose`
+
+## Action 示例
+
+### 1) `get_status`
+
+请求：
+
+```json
+{
+  "correlation_id": "c-001",
+  "reply_to": "hrd/gateway/reply",
+  "action": "get_status",
+  "payload": {}
+}
+```
+
+响应 `data` 主要字段：
+
+- `battery`
+- `mode`（默认 `AUTO`）
+- `robot_id`
+- `state`（默认 `idle`）
+- `position`
+- `last_action`
+- `last_error`
+
+### 2) `get_position`
+
+请求：
+
+```json
+{
+  "correlation_id": "c-002",
+  "reply_to": "hrd/gateway/reply",
+  "action": "get_position",
+  "payload": {}
+}
+```
+
+响应 `data` 主要字段：
+
+- `position`（包含 `frame_id/x/y/z/yaw`）
+- `frame_id`
+- `x` / `y` / `z` / `yaw`
+
+### 3) `move_to`
+
+请求（兼容 `payload.pose` / `payload.target` / `payload.position`）：
+
+```json
+{
+  "correlation_id": "c-003",
+  "reply_to": "hrd/gateway/reply",
+  "action": "move_to",
+  "payload": {
+    "pose": {
+      "frame_id": "map",
+      "x": 1.0,
+      "y": 2.0,
+      "yaw": 0.5
+    }
+  }
+}
+```
+
+响应 `data` 主要字段：
+
+- `accepted`
+- `message`
+- `final_pose`（包含 `frame_id/x/y/yaw`）
+- `ros2_meta`

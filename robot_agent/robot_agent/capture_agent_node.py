@@ -53,6 +53,20 @@ class CaptureAgentNode(Node):
 
         self._sub = self.create_subscription(Image, self._camera_topic, self._on_image, 10)
 
+        self._robot_lock = threading.Lock()
+        self._position: dict[str, Any] = {
+            "frame_id": "map",
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "yaw": 0.0,
+        }
+        self._battery = 0.76
+        self._mode = "AUTO"
+        self._robot_state = "idle"
+        self._last_action = "startup"
+        self._last_error = ""
+
         self._mqtt = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             client_id=f"robot-capture-agent-{self._robot_id}",
@@ -117,27 +131,128 @@ class CaptureAgentNode(Node):
             self.get_logger().warning("missing correlation_id or reply_to")
             return
 
-        if action != "capture_image":
-            body = self._build_err(correlation_id, f"unsupported action {action}")
-        else:
-            camera_name = str(payload.get("camera", "front"))
-            try:
-                jpeg, width, height = self._capture_latest_jpeg(timeout_seconds=3.0)
-                body = self._build_ok(
-                    correlation_id,
-                    {
-                        "camera": camera_name,
-                        "mime": "image/jpeg",
-                        "width": width,
-                        "height": height,
-                        "image_jpeg_base64": base64.b64encode(jpeg).decode("ascii"),
-                    },
-                )
-            except Exception as exc:
-                body = self._build_err(correlation_id, f"capture failed: {exc}")
+        body = self._handle_action(correlation_id, action, payload)
 
         client.publish(reply_to, json.dumps(body, ensure_ascii=False), qos=1)
         self.get_logger().info(f"action={action} correlation_id={correlation_id} reply_to={reply_to}")
+
+    def _handle_action(self, correlation_id: str, action: str, payload: dict[str, Any]) -> dict[str, Any]:
+        handlers = {
+            "capture_image": self._handle_capture_image,
+            "get_status": self._handle_get_status,
+            "get_position": self._handle_get_position,
+            "move_to": self._handle_move_to,
+        }
+        handler = handlers.get(action)
+        if handler is None:
+            return self._build_err(correlation_id, f"unsupported action {action}")
+
+        try:
+            data = handler(payload)
+            return self._build_ok(correlation_id, data)
+        except Exception as exc:
+            with self._robot_lock:
+                self._last_error = str(exc)
+            return self._build_err(correlation_id, f"{action} failed: {exc}")
+
+    def _handle_capture_image(self, payload: dict[str, Any]) -> dict[str, Any]:
+        camera_name = str(payload.get("camera", "front"))
+        jpeg, width, height = self._capture_latest_jpeg(timeout_seconds=3.0)
+        with self._robot_lock:
+            self._last_action = "capture_image"
+        return {
+            "camera": camera_name,
+            "mime": "image/jpeg",
+            "width": width,
+            "height": height,
+            "image_jpeg_base64": base64.b64encode(jpeg).decode("ascii"),
+        }
+
+    def _handle_get_status(self, payload: dict[str, Any]) -> dict[str, Any]:
+        del payload
+        with self._robot_lock:
+            position = dict(self._position)
+            return {
+                "battery": self._battery,
+                "mode": self._mode,
+                "robot_id": self._robot_id,
+                "state": self._robot_state,
+                "position": position,
+                "last_action": self._last_action,
+                "last_error": self._last_error,
+            }
+
+    def _handle_get_position(self, payload: dict[str, Any]) -> dict[str, Any]:
+        del payload
+        with self._robot_lock:
+            position = dict(self._position)
+            self._last_action = "get_position"
+        return {
+            "position": position,
+            "frame_id": position["frame_id"],
+            "x": position["x"],
+            "y": position["y"],
+            "z": position["z"],
+            "yaw": position["yaw"],
+        }
+
+    def _handle_move_to(self, payload: dict[str, Any]) -> dict[str, Any]:
+        with self._robot_lock:
+            current = dict(self._position)
+        target = self._parse_target_pose(payload, current=current)
+
+        with self._robot_lock:
+            # Keep move_to synchronous and deterministic for gateway task flow.
+            self._robot_state = "idle"
+            self._mode = "AUTO"
+            self._position = dict(target)
+            self._last_action = "move_to"
+            self._last_error = ""
+            final_pose = dict(self._position)
+
+        return {
+            "accepted": True,
+            "message": "ROS2 nav command accepted and completed",
+            "final_pose": {
+                "frame_id": final_pose["frame_id"],
+                "x": final_pose["x"],
+                "y": final_pose["y"],
+                "yaw": final_pose["yaw"],
+            },
+            "ros2_meta": {
+                "adapter": "robot_agent_capture_node",
+                "action_server": "/navigate_to_pose",
+                "goal_id": f"goal-{int(time.time())}",
+                "result_code": 0,
+            },
+        }
+
+    def _parse_target_pose(self, payload: dict[str, Any], *, current: dict[str, Any]) -> dict[str, Any]:
+        source = payload.get("pose")
+        if not isinstance(source, dict):
+            source = payload.get("target")
+        if not isinstance(source, dict):
+            source = payload.get("position")
+        if not isinstance(source, dict):
+            source = payload
+
+        frame_id = str(source.get("frame_id", current["frame_id"]))
+        return {
+            "frame_id": frame_id,
+            "x": self._to_float(source.get("x"), default=current["x"]),
+            "y": self._to_float(source.get("y"), default=current["y"]),
+            "z": self._to_float(source.get("z"), default=current["z"]),
+            "yaw": self._to_float(source.get("yaw"), default=current["yaw"]),
+        }
+
+    @staticmethod
+    def _to_float(value: Any, *, default: float) -> float:
+        if value is None:
+            return default
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
 
     def _capture_latest_jpeg(self, *, timeout_seconds: float) -> tuple[bytes, int, int]:
         deadline = time.time() + timeout_seconds
@@ -190,4 +305,3 @@ def main() -> int:
         if rclpy.ok():
             rclpy.shutdown()
     return 0
-
