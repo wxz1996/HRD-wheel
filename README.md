@@ -20,7 +20,7 @@ flowchart LR
     C --> B
     B -->|HTTP: Envelope| A
 
-    B -.可选实时事件.->|WS /v1/tasks/{task_id}/events| A
+    B -.->|可选实时事件: WS /v1/tasks/:task_id/events| A
 ```
 
 ## 2. 一次技能调用的时序图
