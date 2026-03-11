@@ -10,11 +10,11 @@
 ```mermaid
 flowchart LR
     A[OpenClaw / 控制面] -->|HTTP: POST /v1/tasks| B[robot_gateway]
-    B -->|调用 adapter|get_status/get_position/move_to/capture_image C[mqtt_json_adapter]
-    C -->|PUBLISH cmd\n{prefix}/robot/{robot_id}/cmd| D[(MQTT Broker)]
-    D --> E[robot_agent capture_agent_node]
-    E -->|PUBLISH reply\n{prefix}/gateway/{gateway_client_id}/reply| D
-    D --> C
+    B -->|调用 adapter| C[mqtt_json_adapter]
+    C -->|PUBLISH cmd (action + payload)\n{prefix}/robot/{robot_id}/cmd| D[(MQTT Broker)]
+    D -->|deliver cmd| E[robot_agent capture_agent_node]
+    E -->|PUBLISH reply (ok + data/error)\n{prefix}/gateway/{gateway_client_id}/reply| D
+    D -->|deliver reply| C
     C --> B
     B -->|HTTP: Envelope| A
 
@@ -32,7 +32,7 @@ sequenceDiagram
     participant AG as robot_agent
 
     CP->>GW: POST /v1/tasks (skill + input)
-    GW->>AD: adapter.<skill>(...)
+    GW->>AD: adapter.skill(...)
     AD->>MQ: publish cmd topic
     Note over AD,MQ: {prefix}/robot/{robot_id}/cmd
     MQ->>AG: deliver cmd
