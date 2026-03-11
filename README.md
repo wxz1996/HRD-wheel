@@ -11,9 +11,11 @@
 flowchart LR
     A[OpenClaw / 控制面] -->|HTTP: POST /v1/tasks| B[robot_gateway]
     B -->|调用 adapter| C[mqtt_json_adapter]
-    C -->|PUBLISH cmd (action + payload)\n{prefix}/robot/{robot_id}/cmd| D[(MQTT Broker)]
+    C -->|publish cmd topic| D[(MQTT Broker)]
+    C -.->|prefix/robot/robot_id/cmd| D
     D -->|deliver cmd| E[robot_agent capture_agent_node]
-    E -->|PUBLISH reply (ok + data/error)\n{prefix}/gateway/{gateway_client_id}/reply| D
+    E -->|publish reply topic| D
+    E -.->|prefix/gateway/gateway_client_id/reply| D
     D -->|deliver reply| C
     C --> B
     B -->|HTTP: Envelope| A
