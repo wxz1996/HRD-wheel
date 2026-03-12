@@ -1,0 +1,25 @@
+topics:
+  upstream:
+    - name: /hrt/robot/state
+      message: robot_state
+    - name: /hrt/robot/pose
+      message: pose
+    - name: /hrt/robot/head_state
+      message: head_state
+    - name: /hrt/robot/base_state
+      message: base_state
+    - name: /hrt/robot/network_state
+      message: network_state
+    - name: /hrt/camera/rgb
+      message: camera_rgb
+    - name: /hrt/vision/results
+      message: vision_results
+    - name: /hrt/robot/logs
+      message: robot_log
+  downstream:
+    - name: /hrt/control/base_joystick
+      message: base_joystick
+    - name: /hrt/control/recognition_toggle
+      message: recognition_toggle
+    - name: /hrt/control/selection
+      message: selection
