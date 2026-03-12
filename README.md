@@ -11,6 +11,18 @@
 - `robot_interfaces/`: 机器人通信接口声明（messages/topics/services/adapters）
 - `docs/mvp-api.md`: MVP 接口文档
 
+
+## 与既有目录的关系（避免误解）
+
+本仓库历史上已经存在 `robot_gateway/` 与 `robot_agent/` 两个模块（旧链路）。
+
+本次 v0.0.1 MVP 新增的是并行目录：`frontend/`、`gateway/`、`robot_interfaces/`，用于最小闭环演示。
+
+- `robot_gateway/`、`robot_agent/`：仓库既有内容，本次未改其业务代码
+- `gateway/`、`frontend/`、`robot_interfaces/`：本次 MVP 交付
+
+若你希望仓库只保留本次 MVP，我可以下一步再提交一次“目录瘦身”清理（删除或归档旧目录）。
+
 ## 快速启动
 
 ### 1) 启动网关（mock 模式）
