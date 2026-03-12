@@ -1,5 +1,5 @@
-robot_gateway/.venv/
-robot_agent/.venv/
+legacy/robot_gateway/.venv/
+legacy/robot_agent/.venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
