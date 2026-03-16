@@ -1,0 +1,15 @@
+INFO:     Will watch for changes in these directories: ['/Users/wenwen/Desktop/code/HRD-wheel']
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [14062] using WatchFiles
+INFO:     Started server process [14064]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:55416 - "POST /api/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55417 - "POST /api/tasks/inspect-gas-stove HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55419 - "POST /api/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55420 - "POST /api/tasks/inspect-gas-stove HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [14064]
+INFO:     Stopping reloader process [14062]

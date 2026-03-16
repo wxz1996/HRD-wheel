@@ -1,4 +1,0 @@
-interface:
-  display_name: "Robot Gateway"
-  short_description: "Develop and debug Robot Gateway service"
-  default_prompt: "Use $robot-gateway to implement or troubleshoot Robot Gateway API and streaming changes."

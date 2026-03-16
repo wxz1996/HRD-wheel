@@ -1,0 +1,15 @@
+[project]
+name = "hrd-wheel-workspace"
+version = "0.1.0"
+description = "Workspace for HRT gateway_agent and robot agent Python projects"
+requires-python = ">=3.10,<3.13"
+dependencies = []
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = [
+  "gateway_agent",
+  "robot_agent",
+]

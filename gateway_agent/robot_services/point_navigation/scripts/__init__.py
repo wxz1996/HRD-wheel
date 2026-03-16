@@ -1,0 +1,1 @@
+"""Point-navigation service scripts."""
