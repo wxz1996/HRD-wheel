@@ -1,0 +1,20 @@
+1773640306: mosquitto version 2.0.21 starting
+1773640306: Config loaded from /Users/wenwen/Desktop/code/HRD-wheel/gateway_agent/mosquitto/mosquitto.dev.conf.
+1773640306: Opening ipv4 listen socket on port 1883.
+1773640306: mosquitto version 2.0.21 running
+1773640306: New connection from 127.0.0.1:55399 on port 1883.
+1773640306: New connection from 127.0.0.1:55400 on port 1883.
+1773640306: New connection from 127.0.0.1:55401 on port 1883.
+1773640306: New client connected from 127.0.0.1:55399 as hrt-gateway-video (p2, c1, k30).
+1773640306: New client connected from 127.0.0.1:55400 as hrt-gateway-manipulation (p2, c1, k30).
+1773640306: New client connected from 127.0.0.1:55401 as hrt-gateway-motion (p2, c1, k30).
+1773640306: New connection from 127.0.0.1:55404 on port 1883.
+1773640306: New client connected from 127.0.0.1:55404 as hrt-gateway-point-navigation (p2, c1, k30).
+1773640306: New connection from 127.0.0.1:55406 on port 1883.
+1773640306: New client connected from 127.0.0.1:55406 as hrt-gateway-vision (p2, c1, k30).
+1773646815: Client hrt-gateway-vision disconnected.
+1773646815: Client hrt-gateway-point-navigation disconnected.
+1773646816: Client hrt-gateway-motion disconnected.
+1773646816: Client hrt-gateway-manipulation disconnected.
+1773646817: Client hrt-gateway-video disconnected.
+1773646817: mosquitto version 2.0.21 terminating

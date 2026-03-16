@@ -1,9 +1,11 @@
 legacy/robot_gateway/.venv/
 legacy/robot_agent/.venv/
+.venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
-frontend/node_modules/
-frontend/.next/
-gateway/.venv/
+web_fronted/node_modules/
+web_fronted/.next/
+gateway_agent/.venv/
+robot_agent/.venv/

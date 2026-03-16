@@ -1,7 +1,0 @@
-service: /hrt/service/select_target_action
-request:
-  target_id: obj_001
-  action: pick
-response:
-  accepted: true
-  message: stub only
