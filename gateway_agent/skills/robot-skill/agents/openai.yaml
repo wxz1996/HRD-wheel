@@ -1,0 +1,4 @@
+interface:
+  display_name: "Robot"
+  short_description: "Route robot tasks across gateway subskills"
+  default_prompt: "Use $robot-skill to route a robot task to the right gateway capability."

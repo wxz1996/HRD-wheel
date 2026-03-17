@@ -1,208 +1,140 @@
-# HRD-wheel 总览
+# HRT v0.0.1 MVP Demo
 
-本仓库包含两个核心子项目：
+本次交付聚焦最小闭环：
 
-- `robot_gateway`：数据面网关（FastAPI），对上提供 `/v1/tasks*` 协议
-- `robot_agent`：机器人侧 ROS2 Agent，通过 MQTT JSON 执行技能并回包
+**Web 前端 -> FastAPI 网关 -> MQTT -> robot_agent -> ROS2 相机 topic**
 
-## 1. 整体调用图（包含 skill cmd/reply）
+## 目录结构
 
-```mermaid
-flowchart LR
-    A[OpenClaw / 控制面] -->|HTTP: POST /v1/tasks| B[robot_gateway]
-    B -->|调用 adapter| C[mqtt_json_adapter]
-    C -->|publish cmd topic| D[(MQTT Broker)]
-    C -.->|prefix/robot/robot_id/cmd| D
-    D -->|deliver cmd| E[robot_agent capture_agent_node]
-    E -->|publish reply topic| D
-    E -.->|prefix/gateway/gateway_client_id/reply| D
-    D -->|deliver reply| C
-    C --> B
-    B -->|HTTP: Envelope| A
+- `web_fronted/`: Next.js + TypeScript 前端（`/login`, `/home`, `/ar`）
+- `gateway_agent/`: FastAPI 网关（REST + WebSocket + MQTT 视频桥接）
+- `robot_agent/`: 机器人端 ROS2 视频桥接（RealSense topic -> MQTT）
+- `docs/mvp-api.md`: MVP 接口文档
 
-    B -.->|可选实时事件: WS /v1/tasks/:task_id/events| A
+## 快速启动
+
+### 0) Python 环境（uv）
+
+```bash
+# 在仓库根目录执行，一次性同步 workspace 下所有 Python 子项目
+uv sync --all-packages
 ```
 
-## 2. 一次技能调用的时序图
+### 1) 启动网关（gateway_agent）
 
-```mermaid
-sequenceDiagram
-    participant CP as OpenClaw
-    participant GW as robot_gateway
-    participant AD as mqtt_json_adapter
-    participant MQ as MQTT Broker
-    participant AG as robot_agent
+```bash
+# 获取本机局域网 IP（用于手机同 Wi-Fi 访问）
+IP=$(route get default 2>/dev/null | awk '/interface:/{print $2}' | xargs -I{} ipconfig getifaddr {})
+echo "$IP"
 
-    CP->>GW: POST /v1/tasks (skill + input)
-    GW->>AD: adapter.skill(...)
-    AD->>MQ: publish cmd topic
-    Note over AD,MQ: {prefix}/robot/{robot_id}/cmd
-    MQ->>AG: deliver cmd
-    AG->>MQ: publish reply topic
-    Note over AG,MQ: {prefix}/gateway/{gateway_client_id}/reply
-    MQ->>AD: deliver reply
-    AD->>GW: return parsed result
-    GW->>CP: Envelope(status/data/artifacts)
+export HRT_MQTT_HOST=127.0.0.1
+export HRT_MQTT_PORT=1883
+export HRT_MQTT_VIDEO_TOPIC=hrt/camera/color/jpeg
+export HRT_ALLOWED_ORIGINS="http://$IP:3000,http://localhost:3000,http://127.0.0.1:3000"
+
+uv run --project gateway_agent uvicorn main:app --app-dir gateway_agent --host 0.0.0.0 --port 8000 --reload
 ```
 
-## 3. MQTT 契约（通用）
+### 1.5) 启动 MQTT Broker
 
-### 3.1 cmd（Gateway -> Agent）
+```bash
+# macOS（若未部署）
+brew install mosquitto
 
-```json
-{
-  "protocol": "mqtt-json-v1",
-  "timestamp": 1710000000,
-  "correlation_id": "corr-abc123",
-  "reply_to": "hrd/gateway/gateway-xxxx/reply",
-  "action": "get_status | get_position | move_to | capture_image",
-  "payload": {}
-}
+# 开发模式（允许局域网连接，无鉴权）
+mosquitto -c gateway_agent/mosquitto/mosquitto.dev.conf
+
+# 生产建议（开启用户名密码）
+# 先创建账号：
+#   mosquitto_passwd -c /opt/homebrew/etc/mosquitto/passwd hrt
+# 再启动：
+#   mosquitto -c gateway_agent/mosquitto/mosquitto.auth.conf
+
+# 或 Linux
+# sudo apt install mosquitto
+# sudo systemctl start mosquitto
 ```
 
-### 3.2 reply（Agent -> Gateway）
+### 2) 启动机器人视频桥接（robot_agent，在机器人端）
 
-```json
-{
-  "protocol": "mqtt-json-v1",
-  "timestamp": 1710000001,
-  "correlation_id": "corr-abc123",
-  "ok": true,
-  "data": {}
-}
+```bash
+# 可选：同步 robot_agent 的 Python 依赖（paho-mqtt 等）
+uv sync --project robot_agent
+
+# robot_agent 通过 ROS2/colcon 运行
+colcon build --packages-select robot_agent
+source install/setup.bash
+ros2 launch robot_agent robot_agent.launch.py \
+  mqtt_host:=<MQTT_BROKER_IP> \
+  camera_topic:=/camera/color/image_raw \
+  video_topic:=hrt/camera/color/jpeg \
+  stream_fps:=30 \
+  start_realsense:=true
 ```
 
-失败时：
+说明：
+- 默认订阅：`/camera/color/image_raw`
+- 默认发布：`hrt/camera/color/jpeg`
+- 若 broker 不在机器人本机，`mqtt_host` 不能填 `127.0.0.1`，应填 broker 机器的局域网 IP
 
-```json
-{
-  "protocol": "mqtt-json-v1",
-  "timestamp": 1710000001,
-  "correlation_id": "corr-abc123",
-  "ok": false,
-  "error": "..."
-}
+### 2.1) Broker 自检（建议）
+
+```bash
+# 1) 确认 1883 监听（应看到 0.0.0.0:1883 或实际网卡地址）
+lsof -nP -iTCP:1883 -sTCP:LISTEN
+
+# 2) 确认视频 topic 有帧（如果超时，说明 robot_agent 没有推到 broker）
+mosquitto_sub -h 127.0.0.1 -p 1883 -t hrt/camera/color/jpeg -C 1 -W 5 -N | wc -c
+
+# 3) 网关视频状态
+TOKEN=$(curl -s -X POST http://127.0.0.1:8000/api/login \
+  -H 'content-type: application/json' \
+  -d '{"account":"demo","password":"demo123"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+
+curl -s http://127.0.0.1:8000/api/video/status -H "Authorization: Bearer $TOKEN"
 ```
 
-## 4. Skill 的 cmd/reply 明细
+### 2.5) 多个 robot_agent 并存（同一 broker）
 
-### 4.1 get_status
+- 每个 agent 必须使用唯一 `robot_id`（避免 MQTT client_id 冲突）
+- 每个 agent 必须使用唯一 `video_topic`（避免视频流混流）
+- 当前网关一次只订阅一个 `HRT_MQTT_VIDEO_TOPIC`，切换机器人后需重启网关
 
-cmd:
+### 3) 启动前端（web_fronted）
 
-```json
-{
-  "action": "get_status",
-  "payload": {}
-}
+```bash
+IP=$(route get default 2>/dev/null | awk '/interface:/{print $2}' | xargs -I{} ipconfig getifaddr {})
+cd web_fronted
+npm install
+NEXT_PUBLIC_API_BASE="http://$IP:8000" npm run dev -- --hostname 0.0.0.0 --port 3000
 ```
 
-reply.data（Agent 返回，Gateway 重点消费 `battery/mode`）：
+访问：
+- 本机：`http://localhost:3000/login` 或 `http://127.0.0.1:3000/login`
+- 手机同 Wi-Fi：`http://<你的局域网IP>:3000/login`
 
-```json
-{
-  "battery": 0.76,
-  "mode": "AUTO",
-  "robot_id": "robot-001",
-  "state": "idle",
-  "position": {"frame_id": "map", "x": 0.0, "y": 0.0, "z": 0.0, "yaw": 0.0},
-  "last_action": "get_status",
-  "last_error": ""
-}
-```
+## MVP 演示流程
 
-### 4.2 get_position
+1. `/login` 使用账号 `demo` / 密码 `demo123` 登录
+2. 进入 `/home`，点击“进入 AR 控制”
+3. 在 `/ar` 查看实时 RGB 视频、状态区、日志区
+4. 拖动摇杆，网关 `/ws/control` 返回 ACK
 
-cmd:
+## 安全默认值（v0.0.1）
 
-```json
-{
-  "action": "get_position",
-  "payload": {}
-}
-```
+- 登录默认账号：`demo`
+- 登录默认密码：`demo123`
+- 网关返回 Bearer Token，后续 REST / WS 需携带 token
+- 可通过环境变量覆盖：
+  - `HRT_DEMO_ACCOUNT`
+  - `HRT_DEMO_PASSWORD`
+  - `HRT_TOKEN_SECRET`
+  - `HRT_STREAM_TOKEN_TTL_SECONDS`
+  - `HRT_ALLOWED_ORIGINS`（逗号分隔）
+  - `HRT_MQTT_HOST`
+  - `HRT_MQTT_PORT`
+  - `HRT_MQTT_VIDEO_TOPIC`
 
-reply.data（Gateway 重点消费 `frame_id/x/y/yaw`）：
+## 说明
 
-```json
-{
-  "position": {"frame_id": "map", "x": 1.2, "y": 3.4, "z": 0.0, "yaw": 0.5},
-  "frame_id": "map",
-  "x": 1.2,
-  "y": 3.4,
-  "z": 0.0,
-  "yaw": 0.5
-}
-```
-
-### 4.3 move_to
-
-cmd（常见）：
-
-```json
-{
-  "action": "move_to",
-  "payload": {
-    "location": null,
-    "timeout_seconds": 4,
-    "pose": {"frame_id": "map", "x": 8.0, "y": 3.0, "yaw": 0.5}
-  }
-}
-```
-
-reply.data（Gateway 重点消费 `accepted/message/final_pose/ros2_meta`）：
-
-```json
-{
-  "accepted": true,
-  "message": "ROS2 nav command accepted and completed",
-  "final_pose": {"frame_id": "map", "x": 8.0, "y": 3.0, "yaw": 0.5},
-  "ros2_meta": {
-    "adapter": "robot_agent_capture_node",
-    "action_server": "/navigate_to_pose",
-    "goal_id": "goal-1710000000",
-    "result_code": 0
-  }
-}
-```
-
-### 4.4 capture_image
-
-cmd:
-
-```json
-{
-  "action": "capture_image",
-  "payload": {"camera": "front"}
-}
-```
-
-reply.data（Gateway 重点消费 `image_jpeg_base64/mime/width/height`）：
-
-```json
-{
-  "camera": "front",
-  "mime": "image/jpeg",
-  "width": 1280,
-  "height": 720,
-  "image_jpeg_base64": "..."
-}
-```
-
-## 5. 关键代码入口
-
-- Gateway 协议入口：`robot_gateway/app/main.py`
-- Gateway MQTT 适配器：`robot_gateway/app/adapters/mqtt_json_adapter.py`
-- Agent MQTT 处理与 action 分发：`robot_agent/robot_agent/capture_agent_node.py`
-- Agent 启动脚本：`robot_agent/scripts/run_robot_agent.py`
-
-## 6. 运行时对齐项
-
-两端必须一致：
-
-- `MQTT_HOST`
-- `MQTT_PORT`
-- `MQTT_TOPIC_PREFIX`
-- `MQTT_ROBOT_ID`
-
-否则表现通常是：Gateway `503 /v1/diagnostics/robot-link` 或 task 超时。
+- 当前不包含多机器人调度、云端鉴权与真实底盘控制闭环。
